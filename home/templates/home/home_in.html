@@ -1,0 +1,468 @@
+{% load static %}
+{% load crispy_forms_tags %}
+
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>GroupChat</title>
+  <link href='https://fonts.googleapis.com/css?family=Source+Sans+Pro:400,600,700,300' rel='stylesheet' type='text/css'>
+  <link rel='stylesheet prefetch'
+    href='https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.6.2/css/font-awesome.min.css'>
+  <link href="//maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" rel="stylesheet" id="bootstrap-css">
+  <script src="//maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js"></script>
+  <script src="//cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+  <link href="//netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap.min.css" rel="stylesheet" id="bootstrap-css">
+  <script src="//netdna.bootstrapcdn.com/bootstrap/3.0.0/js/bootstrap.min.js"></script>
+  <link rel="stylesheet" href="{% static 'home/css/style.css' %}" />
+  <link rel="stylesheet" href="{% static 'home/css/style_home.css' %}" />
+</head>
+
+<body>
+  <div class="container-fluid">
+    <div class="row" id="frame">
+      <div class="col-3">
+        <div id="sidepanel">
+          <div style="margin: 15px;" id="profile">
+            <p>{{ user.username }}</p>
+            <a class="btn btn-outline-danger" href="{% url 'logout' %}">Logout</a>
+            <hr>
+          </div>
+          <div>
+            {% for group in groups %}
+            <a href="{% url 'home:group' group %}">
+              <p style="margin: 15px;" class="name">{{ group.group_name }}</p>
+            </a>
+            {% endfor %}
+            </ul>
+          </div>
+
+          <div id="bottom-bar">
+            <div class="collapse-content">
+              <form method="POST">
+                {% csrf_token %}
+                <fieldset class='form-group'>
+                  <legend id='form-legend' class="border-bottom mb-4">Create Group</legend>
+                  {% crispy g_form %}
+                </fieldset>
+              </form>
+            </div>
+            <button id="addcontact" class="collapse-button"><i class="fa fa-user-plus fa-fw" aria-hidden="true"></i>
+              <span>Create Group</span></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-9 content">
+        {% if group %}
+        <div class="contact-profile">
+          <p>{{ group.group_name }}</p>
+
+          <div id="older_msg_div">
+            <button class="btn btn-outline-info" onclick="call(video=false)">Audio Call</button>
+            <button class="btn btn-outline-info" onclick="call(video=true)">Video Call</button>
+            <button class="btn btn-outline-info" id="answer_call" onclick="call(video=true)">Answer Call</button>
+            <a href="{% url 'home:add_members' group %}" style="text-decoration:none;">
+              <i class="fa fa-user-plus fa-fw" aria-hidden="true"></i> <span>AddMembers</span></a>
+          </div>
+        </div>
+
+        <div class="messages scroll">
+          <ul id="chat-log">
+            {% for msg in fetch_all_message %}
+            <li id="{{msg.id}}">
+              <small> <b class="check_user">{{msg.parent_user.username}}</b>
+                <p>{{msg.message_detail.msg}}</p>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        <div class="message-input">
+          <div class="wrap">
+            <input id="chat-message-input" type="text" placeholder="Write your message..." />
+            <i class="fa fa-paperclip attachment" aria-hidden="true"></i>
+            <button id="chat-message-submit" class="submit">
+              <i class="fa fa-paper-plane" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+        {{ group.group_name|json_script:"group_name" }}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div id="video-call-div">
+      <div id="localDisplay" style="display: none"></div>
+      <div class="fp-Video">
+        <div id="remoteVideo" class="display"></div>
+      </div>
+      <div class="call-action-div">
+        <button class="btn btn-secondary btn-lg" id='mute_video' onclick="muteVideo()">Mute Video</button>
+        <button class="btn btn-secondary btn-lg" id='mute_audio' onclick="muteAudio()">Mute Audio</button>
+        <button class="btn btn-secondary btn-lg" id='sharescreen' onclick="sharescreen()">Share Screen</button>
+        <button class="btn btn-secondary btn-lg" onclick="stopCall(is_send=true)">Stop Call</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="text/javascript" src="{% static 'home/javascript/main.js' %}"></script>
+  <script type="text/javascript" src="{% static 'home/javascript/main_home.js' %}"></script>
+  <script type="text/javascript" src="{% static 'home/javascript/reconnecting-websocket.js' %}"></script>
+  <script type="text/javascript" src="https://flashphoner.com/downloads/builds/flashphoner_client/wcs_api-2.0/current/flashphoner.js"></script>
+  <script>
+    let roomName
+    try {
+      roomName = JSON.parse(document.getElementById('group_name').textContent);
+      console.log(roomName)
+    }
+    catch (e) {
+      roomName = JSON.parse(document.getElementById('group_name'));
+    }
+
+    if (roomName) {
+
+      var fromUser = '{{request.user.username}}'
+      var toUser = 'rjn'
+
+      var SESSION_STATUS = Flashphoner.constants.SESSION_STATUS;
+      var STREAM_STATUS = Flashphoner.constants.STREAM_STATUS;
+      var session;
+      var conferenceStream;
+      var publishStream;
+
+      init_api()
+
+      // scrolling to bottom
+      var messageBody = document.querySelector('.scroll');
+      messageBody.scrollTop = messageBody.scrollHeight - messageBody.clientHeight;
+
+      // store main RTCpeerConnection
+      const check_user = document.querySelectorAll(".check_user")
+      for (let i = 0; i < check_user.length; i++) {
+        if (check_user[i].innerText === '{{request.user.username}}') {
+          check_user[i].innerText = 'You'
+        }
+      }
+      
+      let ws_scheme = window.location.protocol == "https:" ? "wss://" : "ws://";
+
+      var chatSocket = new WebSocket(
+        ws_scheme + window.location.host + '/ws/chat/' + roomName + '/'
+      );
+
+      chatSocket.addEventListener('message', message_fun)
+
+      // sending message to server using websocket
+      document.querySelector('#chat-message-input').onkeyup = (e) => {
+        if (e.keyCode === 13) {  // enter, return
+          document.querySelector('#chat-message-submit').click();
+        }
+      };
+
+      document.querySelector('#chat-message-submit').onclick = (e) => {
+        const messageInputDom = document.querySelector('#chat-message-input');
+        const message = messageInputDom.value;
+        if (message.length == 0) {
+          event.preventDefault();
+          return false;
+        }
+
+        chatSocket.send(JSON.stringify({
+          'message': message,
+          'msg_type': 'TEXT_MESSAGE',
+          'fromUser': fromUser,
+          'toUser': toUser
+        }));
+
+        messageInputDom.value = '';
+      };
+    }
+
+    const add_element = (data) => {
+      const user = data.fromUser === '{{request.user.username}}' ? "You" : data.fromUser
+      const error_msg = data.error_message === 'MESSAGE_OUT_OF_LENGTH' ? "<br/>" + "Error:Msg size must be less then 50 char." + "<br/>" + " This Message not sent.." : false
+
+      ele = `<li id=${data.msg_id}><small> <b class="check_user">${user}</b><p>${data.message}</p></li>
+            <small><br/>${error_msg ? error_msg : ''}</small>`
+      document.querySelector('#chat-log').innerHTML += ele
+      messageBody.scrollTop = messageBody.scrollHeight - messageBody.clientHeight;
+    }
+
+    async function message_fun(e) {
+      const data = JSON.parse(e.data);
+      console.log(data.msg_type)
+
+      if (data.msg_type === 'ERROR_OCCURED') {
+        if (data.error_message === 'MESSAGE_OUT_OF_LENGTH') {
+          box_color = 'red'
+          add_element(data, box_color)
+        }
+        else if (data.error_message === 'UN_AUTHENTICATED') {
+          alert("You are not authenticated user!!!Login Again..")
+        }
+      }
+
+      else if (data.msg_type === 'TEXT_MESSAGE') {
+        box_color = '#7d7dee'
+        add_element(data, box_color)
+        if (data.toUser == '{{request.user.username}}') {
+          check_read(fromUser, toUser, data.msg_id);
+        }
+      }
+
+      else if (data.msg_type === 'offer') {
+        if (data.fromUser !== '{{request.user.username}}') {
+          //when other called you
+
+          var calling = `${data.fromUser} is calling`;
+          isVideo = data.is_video
+
+          //show answer button
+          document.getElementById("answer_call").innerHTML = calling;
+          document.getElementById("answer_call").style.display = "inline";
+        }
+      }
+
+      else if (data.msg_type === 'stop') {
+        if (data.fromUser !== '{{request.user.username}}') {
+          // console.log('stop');
+          await stopCall(is_send = false);
+        }
+      }
+    };
+
+    var remoteVideo = document.getElementById("remoteVideo");
+    var localDisplay = document.getElementById("localDisplay");
+
+    async function get_media(is_video = false, is_screen = false) {
+
+      if (!is_screen) {
+        isVideo = is_video
+        document.getElementById("mute_video").innerHTML = isVideo == true ? "Stop Video" : "Video";
+
+        await navigator.mediaDevices.getUserMedia({
+          video: is_video,
+          audio: true,
+        })
+          .then((stream) => {
+            localStream = stream
+            our_video.srcObject = stream
+            our_video.onloadeddata = () => {
+              our_video.play();
+            }
+            // console.log("streaming");
+          })
+          , (e => {
+            alert('getUserMedia() error: ' + e.name);
+          })
+      }
+
+      else if (is_screen) {
+        await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            cursor: "always"
+          },
+          audio: true
+        })
+          .then((stream) => {
+            screenStream = stream
+            our_video.srcObject = stream
+            our_video.onloadeddata = () => {
+              our_video.play();
+            };
+            // console.log("screening");                    
+          })
+          , (e => {
+            alert('getUserMedia() error: ' + e.name);
+          })
+      }
+    }
+
+    //Init Flashphoner API on page load
+    function init_api() {
+      Flashphoner.init({});
+
+      //Connect to WCS server over websockets
+      session = Flashphoner.createSession({
+          urlServer: "wss://demo.flashphoner.com" //specify the address of your WCS
+      }).on(SESSION_STATUS.ESTABLISHED, function(session) {
+          console.log("ESTABLISHED");
+      });        
+    }
+
+    async function call(isvideo) {
+
+      // console.log('call isVideo', isVideo) 
+      document.getElementById("video-call-div").style.display = "inline"
+      document.getElementById("frame").style.display = "none"
+
+        var streamName = fromUser + "#" + "room1";
+        var constraints = {
+            audio: true,
+            video: true
+        };
+
+        chatSocket.send(JSON.stringify({
+          msg_type: 'offer',
+          fromUser: fromUser,
+          is_video: isVideo
+        }));
+
+        publishStream = await session.createStream({
+          name: streamName,
+          display: localDisplay,
+          receiveVideo: false,
+          receiveAudio: false,
+          constraints: constraints,
+        }).on(STREAM_STATUS.PUBLISHING, function(publishStream) {
+            playStream(session);
+        }) 
+
+        await publishStream.publish();   
+    }
+
+    function playStream(session) {
+      var streamName = "room1" + "-" + fromUser + "room1";
+      var constraints = {
+          audio: true,
+          video: true
+      };
+
+      conferenceStream = session.createStream({
+          name: streamName,
+          display: remoteVideo,
+          constraints: constraints,
+
+      }).on(STREAM_STATUS.PLAYING, function(stream) {})
+      conferenceStream.play();
+    }
+
+    let isAudio = true
+    let isVideo = true
+    let isScreen = false
+    function muteAudio() {
+      isAudio = !isAudio
+      localStream.getAudioTracks()[0].enabled = isAudio
+      document.getElementById("mute_audio").innerHTML = isAudio == true ? "Mute Audio" : "Unmute Audio";
+    }
+
+    async function muteVideo() {
+      isVideo = !isVideo
+      if (videoSender) {
+        localStream.getVideoTracks()[0].enabled = isVideo
+      }
+      else {
+        await localStream.getTracks().forEach((track) => { track.stop() });
+        await get_media(is_video = isVideo)
+        
+        peerConn.removeTrack(audioSender);
+
+        if (videoSender) {
+          peerConn.removeTrack(videoSender);
+        }
+
+        audioSender = peerConn.addTrack(localStream.getAudioTracks()[0], localStream)
+        videoSender = peerConn.addTrack(localStream.getVideoTracks()[0], localStream)
+
+        const offer = await peerConn.createOffer();
+        // console.log("offer created");
+
+        await peerConn.setLocalDescription(offer);
+        // console.log("offer setLocalDescription");
+
+        //to send a call
+        chatSocket.send(JSON.stringify({
+          msg_type: 'offer',
+          fromUser: fromUser,
+          toUser: toUser,
+          offer: offer,
+          is_video: isVideo
+        })
+        );
+
+        // console.log("send offer")
+      }
+      document.getElementById("mute_video").innerHTML = isVideo == true ? "Stop Video" : "Video";
+    }
+
+    async function sharescreen() {
+      isScreen = !isScreen
+
+      if (isScreen) {
+        await get_media(is_video = false, is_screen = isScreen)
+        if (videoSender) {
+          videoSender.replaceTrack(screenStream.getVideoTracks()[0]);
+        }
+        else {
+          // peerConn.removeTrack(audioSender);
+          await peerConn.addTrack(screenStream.getVideoTracks()[0], screenStream)
+          // await peerConn.addTrack(screenStream.getAudioTracks()[0], screenStream)
+          const offer = await peerConn.createOffer();
+          // console.log("offer created");
+
+          await peerConn.setLocalDescription(offer);
+          // console.log("offer setLocalDescription");
+
+          //to send a call
+          chatSocket.send(JSON.stringify({
+            msg_type: 'offer',
+            fromUser: fromUser,
+            toUser: toUser,
+            offer: offer,
+            is_video: isVideo
+          }));
+
+          console.log("send offer from screen share")
+        }
+      }
+
+      else {
+        await screenStream.getTracks().forEach((track) => { track.stop() });
+
+        if (videoSender) {
+          videoSender.replaceTrack(localStream.getVideoTracks()[0]);
+        }
+        else {
+          our_video.srcObject = null
+          remote_video1.srcObject = null
+        }
+      }
+
+      document.getElementById("sharescreen").innerHTML = isScreen == true ? "Stop share Screen" : "Share Screen";
+    }
+
+    async function stopCall(is_send = true) {
+
+      peerConn = null
+      isVideo = true
+      isAudio = true
+      isScreen = false
+      alreadyConnected = false
+      session.disconnect()
+      init_api()
+
+      // console.log("Vid off");
+      document.getElementById("video-call-div").style.display = "none"
+      document.getElementById("answer_call").style.display = "none";
+      document.getElementById("sharescreen").innerHTML = "Share Screen";
+      document.getElementById("mute_video").innerHTML = "Video";
+      document.getElementById("mute_video").innerHTML = "Audio";
+      document.getElementById("frame").style.display = "flex"
+
+      //to stop a call
+      // console.log("Send Call");
+      if (is_send) {
+        chatSocket.send(JSON.stringify({
+          msg_type: 'stop',
+          'fromUser': fromUser,
+          'toUser': toUser
+        }));
+        // console.log("send stop");
+      }
+    }
+  </script>
+</body>
+
+</html>
